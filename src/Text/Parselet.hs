@@ -1,10 +1,10 @@
 {-# LANGUAGE LambdaCase, ViewPatterns, PatternSynonyms #-}
 module Text.Parselet where
 
-import Prelude hiding (drop, length)
+import Prelude hiding (drop, length, any, repeat)
 
 import Control.Monad (void)
-import Data.Text
+import Data.Text hiding (elem, any)
 
 pattern a :< as <- (uncons -> Just (a, as))
 pattern TEmpty <- (uncons -> Nothing)
@@ -42,17 +42,28 @@ instance Monad Parser where
         Nothing -> Nothing
         Just (result, rest) -> runParser rest (f result)
 
+assocr :: Parser a -> Parser (a -> a -> a) -> Parser a
+assocr var op = do
+      v <- var
+      rest v var op <|> pure v
+  where
+    rest x var op =
+      (do
+         f <- op
+         f x <$> assocr var op)
+        <|> pure x
+  
 nop :: Parser ()
 nop = Parser $ \s -> Just ((), s)
 
-phrase :: Text -> Parser a -> Parser a
-phrase match p = Parser $ \s ->
+phrase :: Text -> Parser Text
+phrase match = Parser $ \s ->
   if match `isPrefixOf` s
-  then runParser (drop (length match) s) p
+  then Just (match, drop (length match) s)
   else Nothing
 
 phrase_ :: Text -> Parser ()
-phrase_ match = phrase match nop
+phrase_ t = void (phrase t)
 
 eatTo :: Parser a -> Parser a
 eatTo p =
@@ -65,33 +76,37 @@ eatTo p =
 
 upto :: Char ->  Parser ()
 upto c = Parser $ \case
-  ss@(s :< rest) | s == c -> Just ((), ss)
-  ss@(s :< rest) | otherwise -> runParser rest (upto c)
+  ss@(s :< _) | s == c -> Just ((), ss)
+  (_ :< rest) | otherwise -> runParser rest (upto c)
   _ -> Nothing
 
-toNext :: Text -> Parser ()
-toNext  s = eatTo (phrase s nop)
+toNext :: Text -> Parser Text
+toNext  s = eatTo (phrase s)
 
 one :: Char -> Parser Char
 one c = Parser $ \case
   (s :< rest) | s == c -> Just (s, rest)
-  (s :< rest) | otherwise -> Nothing
   _ -> Nothing
 
 one_ :: Char -> Parser ()
 one_ c = void (one c)
 
-many :: Char -> Parser Text
-many c = Parser $ \s ->
-  let res = go c s
-  in Just (res, drop (length res) s)
-  where
-    go :: Char -> Text -> Text
-    go _ TEmpty = empty
-    go c (s :< rest) =
-      if s == c
-        then cons s (go c rest)
-        else empty
+any :: [Char] -> Parser Char
+any cs = Parser $ \case
+  (s :< rest) | s `elem` cs -> Just (s, rest)
+  _ -> Nothing
+
+alphanumeric :: Parser Char
+alphanumeric = any "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+
+repeat :: Char -> Parser Text
+repeat c = fmap pack (repeatUntil (one c))
+
+whitespace :: Parser Text
+whitespace = repeat ' '
+
+word :: Parser Text
+word = fmap pack (repeatUntil alphanumeric)
 
 (<|>) :: Parser a -> Parser a -> Parser a
 (<|>) p q = Parser $ \s ->
@@ -106,10 +121,10 @@ repeatUntil :: Parser a -> Parser [a]
 repeatUntil p = Parser $ \s -> Just $ go p s
   where
     go :: Parser a -> Text -> ([a], Text)
-    go p s =
-      case runParser s p of
+    go pp s =
+      case runParser s pp of
         Just (res, rest) ->
-          let (r, rr) = go p rest
+          let (r, rr) = go pp rest
            in (res : r, rr)
         Nothing -> ([], s)
 
@@ -126,4 +141,4 @@ takeUntil str =
       | otherwise =
         let (result, rest) = go s str2
          in (cons ss result, rest)
-    go _ TEmpty = (empty, empty)
+    go _ _ = (empty, empty)
