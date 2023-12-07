@@ -1,7 +1,7 @@
-{-# LANGUAGE LambdaCase, ViewPatterns, PatternSynonyms #-}
+{-# LANGUAGE OverloadedStrings, LambdaCase, ViewPatterns, PatternSynonyms #-}
 module Text.Parselet where
 
-import Prelude hiding (drop, length, any, repeat)
+import Prelude hiding (drop, length, any, repeat, not)
 
 import Control.Monad (void)
 import Data.Text hiding (elem, any)
@@ -65,23 +65,11 @@ phrase match = Parser $ \s ->
 phrase_ :: Text -> Parser ()
 phrase_ t = void (phrase t)
 
-eatTo :: Parser a -> Parser a
-eatTo p =
-  Parser $ \case
-    ss@(_ :< rest) ->
-      case parser p ss of
-        Nothing -> parser (eatTo p) rest
-        x -> x
-    _ -> Nothing
-
 upto :: Char ->  Parser ()
 upto c = Parser $ \case
   ss@(s :< _) | s == c -> Just ((), ss)
   (_ :< rest) | otherwise -> runParser rest (upto c)
   _ -> Nothing
-
-toNext :: Text -> Parser Text
-toNext  s = eatTo (phrase s)
 
 one :: Char -> Parser Char
 one c = Parser $ \case
@@ -91,22 +79,41 @@ one c = Parser $ \case
 one_ :: Char -> Parser ()
 one_ c = void (one c)
 
-any :: [Char] -> Parser Char
-any cs = Parser $ \case
+any :: Parser Char
+any =
+  Parser $ \case
+    (x :< xs) -> Just (x, xs)
+    TEmpty -> Nothing
+
+oneOf :: [Char] -> Parser Char
+oneOf cs = Parser $ \case
   (s :< rest) | s `elem` cs -> Just (s, rest)
   _ -> Nothing
 
 alphanumeric :: Parser Char
-alphanumeric = any "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+alphanumeric = oneOf "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
 
-repeat :: Char -> Parser Text
-repeat c = fmap pack (repeatUntil (one c))
+not :: Char -> Parser Char
+not c =
+  Parser $ \(x :< xs) ->
+    if x /= c
+      then Just (x, xs)
+      else Nothing
+
+eof :: Parser Text
+eof =
+  Parser $ \case
+    TEmpty -> Just ("", "")
+    _ -> Nothing
+  
+repeat :: Parser Char -> Parser Text
+repeat p = fmap pack (repeatUntil p)
+  
+word :: Parser Text
+word = repeat alphanumeric
 
 whitespace :: Parser Text
-whitespace = repeat ' '
-
-word :: Parser Text
-word = fmap pack (repeatUntil alphanumeric)
+whitespace = repeat (one ' ')
 
 (<|>) :: Parser a -> Parser a -> Parser a
 (<|>) p q = Parser $ \s ->
@@ -118,15 +125,18 @@ optional :: Parser () -> Parser ()
 optional p = p <|> nop
 
 repeatUntil :: Parser a -> Parser [a]
-repeatUntil p = Parser $ \s -> Just $ go p s
+repeatUntil p = go
   where
-    go :: Parser a -> Text -> ([a], Text)
-    go pp s =
-      case runParser s pp of
-        Just (res, rest) ->
-          let (r, rr) = go pp rest
-           in (res : r, rr)
-        Nothing -> ([], s)
+    go = do
+      c <- p
+      s <- go'
+      pure (c : s)
+    go' =
+      (do
+         c <- p
+         s <- go'
+         pure (c : s))
+        <|> pure []
 
 takeUntil :: Text -> Parser Text
 takeUntil str =
@@ -142,3 +152,6 @@ takeUntil str =
         let (result, rest) = go s str2
          in (cons ss result, rest)
     go _ _ = (empty, empty)
+
+toNext :: Text -> Parser Text
+toNext t = phrase t <|> (any >> toNext t)
