@@ -56,6 +56,9 @@ assocr var op = do
 nop :: Parser ()
 nop = Parser $ \s -> Just ((), s)
 
+fail :: Parser a
+fail = Parser $ const Nothing
+
 phrase :: Text -> Parser Text
 phrase match = Parser $ \s ->
   if match `isPrefixOf` s
@@ -112,8 +115,8 @@ repeat p = fmap pack (repeatUntil p)
 word :: Parser Text
 word = repeat alphanumeric
 
-whitespace :: Parser Text
-whitespace = repeat (one ' ')
+whitespace :: Parser ()
+whitespace = optional $ void (repeat (oneOf " \n\t"))
 
 (<|>) :: Parser a -> Parser a -> Parser a
 (<|>) p q = Parser $ \s ->
