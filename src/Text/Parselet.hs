@@ -1,12 +1,14 @@
 {-# LANGUAGE OverloadedStrings, LambdaCase, ViewPatterns, PatternSynonyms #-}
 module Text.Parselet where
 
-import Prelude hiding (drop, length, any, repeat, not)
+import Prelude hiding (drop, length, any, repeat, not, fail)
 
 import Control.Monad (void)
-import Data.Text hiding (elem, any)
+import Data.Text hiding (elem, any, foldr)
 
+pattern (:<) :: Char -> Text -> Text
 pattern a :< as <- (uncons -> Just (a, as))
+pattern TEmpty :: Text
 pattern TEmpty <- (uncons -> Nothing)
 
 newtype Parser a = Parser
@@ -93,8 +95,17 @@ oneOf cs = Parser $ \case
   (s :< rest) | s `elem` cs -> Right (s, rest)
   s -> Left s
 
+alpha :: Parser Char
+alpha = oneOf "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+numeric :: Parser Char
+numeric = oneOf "1234567890"
+
 alphanumeric :: Parser Char
-alphanumeric = oneOf "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+alphanumeric = alpha <|> numeric
+
+ident :: Parser Text
+ident = repeat (alphanumeric <|> one '_')
 
 not :: Char -> Parser Char
 not c =
@@ -115,17 +126,26 @@ repeat p = fmap pack (repeatUntil p)
 word :: Parser Text
 word = repeat alphanumeric
 
+space :: Parser ()
+space = optional $ void (repeat (one ' '))
+
 whitespace :: Parser ()
 whitespace = optional $ void (repeat (oneOf " \n\t"))
+
+infixl 3 <|>
 
 (<|>) :: Parser a -> Parser a -> Parser a
 (<|>) p q = Parser $ \s ->
   case runParser s p of
     Right (r, rest) -> Right (r, rest)
-    _ -> runParser s q
+    _otherwise -> runParser s q
 
 optional :: Parser () -> Parser ()
 optional p = p <|> nop
+
+foldOr :: [Parser a] -> Parser a
+foldOr = foldr (<|>) fail
+
 
 repeatUntil :: Parser a -> Parser [a]
 repeatUntil p = go
